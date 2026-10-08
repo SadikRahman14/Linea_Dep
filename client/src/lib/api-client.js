@@ -1,41 +1,38 @@
-import { HOST } from "@/utils/constants";
 import axios from "axios";
+import {
+  HOST,
+  AUTH_ROUTES,
+  SIGNUP_ROUTES,
+  LOGIN_ROUTES,
+} from "@/utils/constants";
 
-const apiClient = axios.create({
-    baseURL: HOST,
-    withCredentials: true
-})
+const apiClient = axios.create({ baseURL: HOST, withCredentials: true });
+let refreshPromise;
 
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
+    const isAuthAction = [SIGNUP_ROUTES, LOGIN_ROUTES, `${AUTH_ROUTES}/refresh-token`]
+      .some((path) => originalRequest?.url?.includes(path));
 
-    if (
-      error.response?.status === 401 &&
-      !originalRequest._retry &&
-      error.response?.data?.error === "jwt expired"
-    ) {
-      originalRequest._retry = true;
-
-      try {
-        const refreshRes = await apiClient.post("/auth/refresh-token");
-
-        const newAccessToken = refreshRes.data.data.accessToken;
-
-        // Attach new token and retry original request
-        apiClient.defaults.headers.common["Authorization"] = `Bearer ${newAccessToken}`;
-        originalRequest.headers["Authorization"] = `Bearer ${newAccessToken}`;
-
-        return apiClient(originalRequest);
-      } catch (refreshErr) {
-        console.error("Refresh token failed", refreshErr);
-        // You can log out user here
-      }
+    if (error.response?.status !== 401 || !originalRequest || originalRequest._retry || isAuthAction) {
+      return Promise.reject(error);
     }
 
-    return Promise.reject(error);
+    originalRequest._retry = true;
+    try {
+      // Concurrent 401 responses share one refresh request (refresh tokens rotate).
+      refreshPromise ||= axios.post(`${HOST}/${AUTH_ROUTES}/refresh-token`, {}, {
+        withCredentials: true,
+      }).finally(() => { refreshPromise = undefined; });
+      await refreshPromise;
+      // Browsers automatically send the refreshed httpOnly accessToken cookie.
+      return apiClient(originalRequest);
+    } catch {
+      return Promise.reject(error);
+    }
   }
 );
 
-export {apiClient};
+export { apiClient };

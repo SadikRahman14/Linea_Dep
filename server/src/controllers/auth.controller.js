@@ -6,11 +6,16 @@ import mongoose from "mongoose"
 import jwt from "jsonwebtoken"
 import { renameSync, unlinkSync} from "fs"
 
-const options = {
-    httpOnly : true,
-    secure : false,
-    sameSite: "Lax"
-}
+// Cookies work on localhost over HTTP and on the Render HTTPS domain.
+// Keep client and API on the same origin in production.
+const cookieOptions = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "lax",
+  path: "/",
+};
+const accessCookieOptions = { ...cookieOptions, maxAge: 15 * 60 * 1000 };
+const refreshCookieOptions = { ...cookieOptions, maxAge: 7 * 24 * 60 * 60 * 1000 };
 
 const generateAccessAndRefreshToken = async(userId) => {
     try {
@@ -35,49 +40,35 @@ const generateAccessAndRefreshToken = async(userId) => {
     }
 }
 
-const refreshAccessToken = asyncHandler( async(req, res) => {
-    const incomingRefreshToken = req.cookies.refreshToken || req.body.refreshToken
+const refreshAccessToken = asyncHandler(async (req, res) => {
+  // Refresh must not require an existing valid access token.
+  const incomingRefreshToken = req.cookies?.refreshToken;
+  if (!incomingRefreshToken) throw new ApiError(401, "Missing refresh token");
 
-    if(!incomingRefreshToken){
-        throw new ApiError(401, "Unauthorized request");
-    }
+  let decoded;
+  try {
+    decoded = jwt.verify(incomingRefreshToken, process.env.REFRESH_TOKEN_SECRET);
+  } catch {
+    throw new ApiError(401, "Invalid or expired refresh token");
+  }
 
-    try {
-        const decodedToken = jwt.verify(incomingRefreshToken, process.env.REFRESH_TOKEN_SECRET);
+  const user = await User.findById(decoded._id);
+  if (!user || user.refreshToken !== incomingRefreshToken) {
+    throw new ApiError(401, "Invalid refresh token");
+  }
 
-        const user = await User.findById(decodedToken?._id);
-
-        if(!user){
-            throw new ApiError(401, "Invalid Refresh Token!");
-        }
-
-        if(incomingRefreshToken !== user?.refreshToken){
-            throw new ApiError(401, "Refresh Token is expired or used");
-        }
-
-        const { accessToken,  refreshToken: newRefreshToken } = await generateAccessAndRefreshToken(user._id);
-
-        return res
-        .status(200)
-        .cookie("accessToken", accessToken)
-        .cookie("refreshToken", newRefreshToken)
-        .json(
-            new ApiResponse(
-                200, {accessToken, refreshToken: newRefreshToken}, "Access Token Refreshed"
-            )
-        )
-    } catch (error) {
-        throw new ApiError(401, error?.message || "Invalid Refresh Token")
-    }
-})
+  const { accessToken, refreshToken } = await generateAccessAndRefreshToken(user._id);
+  return res.status(200)
+    .cookie("accessToken", accessToken, accessCookieOptions)
+    .cookie("refreshToken", refreshToken, refreshCookieOptions)
+    .json(new ApiResponse(200, {}, "Session refreshed"));
+});
 
 const signup = asyncHandler( async(req, res) => {
 
 
-    console.log("Hot Now");
     const { email, password } = req.body;
 
-    console.log("📩 Received:", email, password);
 
     if(!email || !password){
         throw new ApiError(400, "Both email and password are required")
@@ -97,8 +88,8 @@ const signup = asyncHandler( async(req, res) => {
 
     return res
         .status(201)
-        .cookie("refreshToken", refreshToken, options)
-        .cookie("accessToken", accessToken, options)
+        .cookie("refreshToken", refreshToken, refreshCookieOptions)
+        .cookie("accessToken", accessToken, accessCookieOptions)
         .json(
             new ApiResponse(201, {
                 user : {
@@ -132,16 +123,14 @@ const login = asyncHandler( async(req, res) => {
 
     const { accessToken, refreshToken } = await generateAccessAndRefreshToken(user._id);
 
-    const loggedInUser = await User.findById(user._id)
-    .select("-password -refreshToken")
 
 
 
 
     return res
     .status(200)
-    .cookie("accessToken", accessToken, options)
-    .cookie("refreshToken", refreshToken, options) // fixed typo here
+    .cookie("accessToken", accessToken, accessCookieOptions)
+    .cookie("refreshToken", refreshToken, refreshCookieOptions)
     .json(
         new ApiResponse(
             200,
@@ -154,9 +143,7 @@ const login = asyncHandler( async(req, res) => {
                     lastName: user.lastName,
                     image: user.image,
                     color: user.color
-                },
-                accessToken,
-                refreshToken
+                }
             },
             "User Logged in Successfully"
         )
@@ -167,37 +154,20 @@ const login = asyncHandler( async(req, res) => {
 })
 
 const getUserInfo = asyncHandler(async (req, res) => {
-  try {
-    // console.log("req.userId =", req.userId);
-
-    const userData = await User.findById(req.userId);
-
-    if (!userData) {
-      throw new ApiError(404, "User with Given ID not Found!");
-    }
-
-    console.log({userData})
-
-    return res.status(200).json(
-      new ApiResponse(
-        200,
-        {
-          user: {
-            _id: userData._id,
-            email: userData.email,
-            profileSetup: userData.profileSetup,
-            firstName: userData.firstName,
-            lastName: userData.lastName,
-            image: userData.image,
-            color: userData.color,
-          },
-        },
-        "User Data Fetched Successfully"
-      )
-    );
-  } catch (error) {
-    console.error("getUserInfo Error:", error);
-  }
+  const user = req.user;
+  return res.status(200).json(
+    new ApiResponse(200, {
+      user: {
+        _id: user._id,
+        email: user.email,
+        profileSetup: user.profileSetup,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        image: user.image,
+        color: user.color,
+      }
+    }, "User Data Fetched Successfully")
+  );
 });
 
 const updateProfile = asyncHandler( async(req, res, next) => {
@@ -302,8 +272,8 @@ const logoutUser = asyncHandler( async(req, res) => {
 
 
     return res.status(200)
-    .clearCookie("accessToken", options)
-    .clearCookie("refreshToken", options)
+    .clearCookie("accessToken", cookieOptions)
+    .clearCookie("refreshToken", cookieOptions)
     .json(new ApiResponse(200, {}, "User Logged Out Successfully"));
 })
 

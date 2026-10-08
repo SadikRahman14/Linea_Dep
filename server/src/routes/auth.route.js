@@ -20,7 +20,7 @@ const upload = multer({ dest: "uploads/profiles/"});
 
 authRoutes.route("/signup").post(signup)
 authRoutes.route("/login").post(login)
-authRoutes.route("/refresh-token").post(verifyJWT, refreshAccessToken)
+authRoutes.route("/refresh-token").post(refreshAccessToken)
 authRoutes.route("/user-info").get(verifyJWT, getUserInfo)
 authRoutes.route("/update-profile").post(verifyJWT, updateProfile)
 authRoutes.route("/add-profile-image").post(

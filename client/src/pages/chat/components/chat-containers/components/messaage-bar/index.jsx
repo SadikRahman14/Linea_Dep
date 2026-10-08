@@ -44,28 +44,24 @@ function MessageBar() {
     }
 
     const handleSendMessage = () => {
+        const content = message.trim();
+        if (!socket?.connected || !selectedChatData?._id || !content) return;
 
-        if(selectedChatType === "contact"){
+        if (selectedChatType === "contact") {
             socket.emit("sendMessage", {
-                sender: userInfo.id,
-                content: message,
+                content,
                 recipient: selectedChatData._id,
                 messageType: "text",
-                fileURL: undefined,
-            })
-        }
-        else if (selectedChatType === "channel") {
+            });
+        } else if (selectedChatType === "channel") {
             socket.emit("send-channel-message", {
-                sender: userInfo.id,
-                content: message,
-                recipient: selectedChatData._id,
-                messageType: "text",
-                fileURL: undefined,
+                content,
                 channelId: selectedChatData._id,
-            })
+                messageType: "text",
+            });
         }
         setMessage("");
-    }
+    };
 
     const handleAttachmentClick = () => {
         if(fileInputRef.current){
@@ -96,24 +92,20 @@ function MessageBar() {
                 )
 
                 if (response.status === 200 && response.data.data) {
-                    setIsUploading(false)
+                    setIsUploading(false);
+                    if (!socket?.connected || !selectedChatData?._id) return;
                     if (selectedChatType === "contact") {
                         socket.emit("sendMessage", {
-                            sender: userInfo._id,
-                            content: undefined,
+                            recipient: selectedChatData._id,
                             messageType: "file",
                             fileURL: response.data.data.fileURL,
-                        })
-                        console.log("FIle URL:", fileURL);
-                    }
-                    else if (selectedChatType === "channel") {
+                        });
+                    } else if (selectedChatType === "channel") {
                         socket.emit("send-channel-message", {
-                            sender: userInfo.id,
-                            content: undefined,
                             messageType: "file",
                             fileURL: response.data.data.fileURL,
                             channelId: selectedChatData._id,
-                        })
+                        });
                     }
                 }
             }

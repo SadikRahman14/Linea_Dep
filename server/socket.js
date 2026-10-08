@@ -1,136 +1,115 @@
-import { Server as SocketIoServer } from "socket.io"
+import { Server as SocketIoServer } from "socket.io";
+import cookieParser from "cookie-parser";
+import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
+import { User } from "./src/models/user.model.js";
 import Message from "./src/models/messages.model.js";
 import Channel from "./src/models/channel.model.js";
+
+const userRoom = (id) => `user:${id}`;
 
 const setupSocket = (server) => {
   const io = new SocketIoServer(server, {
     cors: {
-      origin: process.env.ORIGIN,
+      origin: process.env.ORIGIN || false,
       methods: ["GET", "POST"],
-      credentials: true
+      credentials: true,
+    },
+  });
+
+  // Parse httpOnly accessToken cookies during the Socket.IO handshake.
+  io.engine.use(cookieParser());
+
+  io.use(async (socket, next) => {
+    try {
+      const token = socket.request.cookies?.accessToken;
+      if (!token) return next(new Error("Unauthorized"));
+      const payload = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
+      const user = await User.findById(payload._id).select("_id");
+      if (!user) return next(new Error("Unauthorized"));
+      socket.data.userId = String(user._id);
+      next();
+    } catch {
+      next(new Error("Unauthorized"));
     }
   });
 
-  const userSocketMap = new Map();
+  const sendMessage = async (socket, message) => {
+    const senderId = socket.data.userId; // NEVER trust a sender ID from the client.
+    if (!message || !mongoose.isValidObjectId(message.recipient)) return;
+    const recipientId = String(message.recipient);
 
-  const disconnect = (socket) => {
-    console.log(`Client Disconnected:: ${socket.id}`);
-    for (const [userId, socketId] of userSocketMap.entries()){
-      if(socketId === socket.id){
-        userSocketMap.delete(userId);
-        break;
-      }
-    }
-  }
+    const messageType = message.messageType === "file" ? "file" : "text";
+    const content = typeof message.content === "string" ? message.content.trim() : "";
+    const fileURL = typeof message.fileURL === "string" ? message.fileURL : "";
+    if (messageType === "text" && (!content || content.length > 5000)) return;
+    if (messageType === "file" && !fileURL.startsWith("uploads/files/")) return;
 
-  // Change sendMessage to accept senderId explicitly
-const sendMessage = async (message, senderId) => {
-  if (!senderId) {
-    console.error("Sender ID missing");
-    return;
-  }
-
-  if (!message.recipient) {
-    console.error("Recipient missing in message", message);
-    return;
-  }
-
-  try {
-    // Explicitly build the message object to save
-    const messageToCreate = {
-      sender: senderId,
-      recipient: message.recipient,
-      content: message.content || null,
-      messageType: message.messageType || "text",
-      timeStamp: new Date(),
-      fileURL: message.fileURL || null,
-    };
-
-    const createdMessage = await Message.create(messageToCreate);
-
-    const messageData = await Message.findById(createdMessage._id)
-      .populate("sender", "id email firstName lastName image color")
-      .populate("recipient", "id email firstName lastName image color");
-
-    const senderSocketId = userSocketMap.get(senderId);
-    const recipientSocketId = userSocketMap.get(message.recipient);
-
-    if (recipientSocketId) {
-      io.to(recipientSocketId).emit("recieveMessage", messageData);
-    }
-    if (senderSocketId) {
-      io.to(senderSocketId).emit("recieveMessage", messageData);
-    }
-  } catch (err) {
-    console.error("Failed to send message:", err);
-  }
-};
-
-
-const sendChannelMessage = async (message, senderId) => {
-  try {
-    const { channelId, content, messageType, fileURL } = message;
-
-    if (!senderId) {
-      console.error("Sender ID missing");
-      return;
-    }
-
-    const createMessage = await Message.create({
-      sender: senderId,
-      recipient: null,
-      content,
-      messageType,
-      timeStamp: new Date(),
-      fileURL
-    });
-
-    const messageData = await Message.findById(createMessage._id)
-      .populate("sender", "id email firstName lastName image color")
-      .exec();
-
-    await Channel.findByIdAndUpdate(channelId, {
-      $push: { messages: createMessage._id }
-    });
-
-    const channel = await Channel.findById(channelId).populate("members");
-    const finalData = { ...messageData._doc, channelId: channel._id };
-
-    if (channel && channel.members) {
-      channel.members.forEach((member) => {
-        const memberSocketId = userSocketMap.get(member._id.toString());
-        if (memberSocketId) {
-          io.to(memberSocketId).emit("recieve-channel-message", finalData);
-        }
+    try {
+      const recipientExists = await User.exists({ _id: recipientId });
+      if (!recipientExists) return;
+      const created = await Message.create({
+        sender: senderId,
+        recipient: recipientId,
+        content: messageType === "text" ? content : undefined,
+        messageType,
+        fileURL: messageType === "file" ? fileURL : undefined,
+        timeStamp: new Date(),
       });
-
-      const adminSocketId = userSocketMap.get(channel.admin._id.toString());
-      if (adminSocketId) {
-        io.to(adminSocketId).emit("recieve-channel-message", finalData);
-      }
+      const fullMessage = await Message.findById(created._id)
+        .populate("sender", "email firstName lastName image color")
+        .populate("recipient", "email firstName lastName image color");
+      io.to(userRoom(senderId)).to(userRoom(recipientId)).emit("recieveMessage", fullMessage);
+    } catch (error) {
+      console.error("Failed to send direct message:", error.message);
     }
-  } catch (error) {
-    console.error("Error sending channel message:", error);
-  }
-};
+  };
 
+  const sendChannelMessage = async (socket, message) => {
+    const senderId = socket.data.userId;
+    if (!message || !mongoose.isValidObjectId(message.channelId)) return;
+    const messageType = message.messageType === "file" ? "file" : "text";
+    const content = typeof message.content === "string" ? message.content.trim() : "";
+    const fileURL = typeof message.fileURL === "string" ? message.fileURL : "";
+    if (messageType === "text" && (!content || content.length > 5000)) return;
+    if (messageType === "file" && !fileURL.startsWith("uploads/files/")) return;
 
+    try {
+      const channel = await Channel.findById(message.channelId);
+      if (!channel) return;
+      const memberIds = [String(channel.admin), ...channel.members.map(String)];
+      if (!memberIds.includes(senderId)) return; // Not a channel member.
+
+      const created = await Message.create({
+        sender: senderId,
+        recipient: null,
+        content: messageType === "text" ? content : undefined,
+        messageType,
+        fileURL: messageType === "file" ? fileURL : undefined,
+        timeStamp: new Date(),
+      });
+      await Channel.findByIdAndUpdate(channel._id, {
+        $push: { messages: created._id },
+        $set: { updatedAt: new Date() },
+      });
+      const fullMessage = await Message.findById(created._id)
+        .populate("sender", "email firstName lastName image color");
+      const data = { ...fullMessage.toObject(), channelId: channel._id };
+      for (const id of new Set(memberIds)) {
+        io.to(userRoom(id)).emit("recieve-channel-message", data);
+      }
+    } catch (error) {
+      console.error("Failed to send channel message:", error.message);
+    }
+  };
 
   io.on("connection", (socket) => {
-    const userId = socket.handshake.query.userId;
-
-    if (userId) {
-      userSocketMap.set(userId, socket.id);
-      console.log(`User Connected :: ${userId} with socket id: ${socket.id}`);
-    } else {
-      console.log("User ID not provided during connection");
-    }
-
-
-    socket.on("sendMessage", (message) => sendMessage(message, userId));
-    socket.on("send-channel-message", (message) => sendChannelMessage(message, userId));
-    socket.on("disconnect", () => disconnect(socket));
+    socket.join(userRoom(socket.data.userId));
+    socket.on("sendMessage", (message) => { void sendMessage(socket, message); });
+    socket.on("send-channel-message", (message) => { void sendChannelMessage(socket, message); });
   });
-}
+
+  return io;
+};
 
 export default setupSocket;

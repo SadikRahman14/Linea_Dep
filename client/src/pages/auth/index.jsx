@@ -69,7 +69,6 @@ function Auth() {
 
             const { user } = response.data.data;
 
-            console.log("Login Response:", response.data);
             toast.success("Logged in Successfully");
 
             if (user && user._id) {
@@ -96,7 +95,6 @@ function Auth() {
                 email: signupEmail, 
                 password: signupPassword
             })
-            console.log({ response });
             toast.success("Signed Up Successfully");
 
             if(response.status === 201){

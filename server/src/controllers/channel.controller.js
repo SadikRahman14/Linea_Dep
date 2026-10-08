@@ -5,6 +5,15 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import Channel from "../models/channel.model.js";
 import mongoose from "mongoose";
 
+const requireChannelAccess = (channel, userId, adminOnly = false) => {
+    if (!channel) throw new ApiError(404, "Channel not found");
+    const isAdmin = String(channel.admin) === String(userId);
+    const isMember = channel.members.some((member) => String(member) === String(userId));
+    if (!isAdmin && (adminOnly || !isMember)) {
+        throw new ApiError(403, "You do not have access to this channel");
+    }
+};
+
 const createChannel = asyncHandler(async (req, res) => {
     const { name, members } = req.body;
 
@@ -59,18 +68,16 @@ const getUserChannels = asyncHandler(async (req, res) => {
 
 const getChannelMessages = asyncHandler(async (req, res) => { 
     const { channelId } = req.params;
-
-    const channel = await Channel.findById(channelId).populate({
+    if (!mongoose.isValidObjectId(channelId)) throw new ApiError(400, "Invalid channel ID");
+    const channel = await Channel.findById(channelId);
+    requireChannelAccess(channel, req.userId);
+    await channel.populate({
         path: "messages",
         populate: {
             path: "sender",
             select: "firstName lastName image _id image color"
         },
     });
-
-    if (!channel) {
-        throw new ApiError(404, "Channel not found");
-    }
 
     const messages = channel.messages;
 
@@ -90,8 +97,10 @@ const getChannelMembers = asyncHandler(async (req, res) => {
         throw new ApiError(400, "Channel ID is required");
     }
 
-    const channel = await Channel.findById(channelId).
-        populate("members", "firstName lastName image _id color");
+    if (!mongoose.isValidObjectId(channelId)) throw new ApiError(400, "Invalid channel ID");
+    const channel = await Channel.findById(channelId);
+    requireChannelAccess(channel, req.userId);
+    await channel.populate("members", "firstName lastName image _id color");
 
     const channelMembers = channel.members;
 
@@ -120,16 +129,13 @@ const addMembers = asyncHandler(async (req, res) => {
         throw new ApiError(400, "User IDs are required and must be an array");
     }
 
+    if (!mongoose.isValidObjectId(channelId)) throw new ApiError(400, "Invalid channel ID");
+    const channel = await Channel.findById(channelId);
+    requireChannelAccess(channel, req.userId, true); // Only the channel admin can invite members.
     const validUsers = await User.find({ _id: { $in: userIds } });
 
     if (validUsers.length !== userIds.length) {
         throw new ApiError(400, "Some user IDs are invalid");
-    }
-
-    const channel = await Channel.findById(channelId);
-
-    if (!channel) {
-        throw new ApiError(404, "Channel not found");
     }
 
     // Prevent duplicates

@@ -1,15 +1,12 @@
 import mongoose from "mongoose";
 
-const DB_NAME = "linea"
+const connectDB = async () => {
+  const databaseUri = process.env.DATABASE_URI;
+  if (!databaseUri) throw new Error("DATABASE_URI is missing");
 
-const connectDB = async() => {
-    try{
-        const connectionInstance = await mongoose.connect(`${process.env.DATABASE_URI}/${DB_NAME}`)
-        console.log(`\n MongoDB connected :: DB host : ${connectionInstance.connection.host}`);
-    } catch(error){
-        console.log("MongoDB connection error", error);
-        process.exit(1);
-    }
-}
+  // Pass the Atlas URI unchanged: appending /linea after its query string breaks it.
+  const connection = await mongoose.connect(databaseUri, { dbName: "linea" });
+  console.log(`MongoDB connected to ${connection.connection.host}`);
+};
 
 export default connectDB;

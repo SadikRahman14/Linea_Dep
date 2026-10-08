@@ -101,9 +101,9 @@ function Profile() {
         withCredentials : true
       });
 
-      if(response.status === 200 && response.data.image){
-        toast.success("Image Uploaded Successfully"); 
-        setUserInfo(prev => ({ ...prev, image: response.data.image }));
+      if (response.status === 200 && response.data.data?.image) {
+        toast.success("Image Uploaded Successfully");
+        setUserInfo({ ...userInfo, image: response.data.data.image });
       }
 
     }
