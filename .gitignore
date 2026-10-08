@@ -1,0 +1,30 @@
+# Node dependencies and compiled output
+**/node_modules/
+**/dist/
+**/dist-ssr/
+**/build/
+**/coverage/
+**/.cache/
+**/.vite/
+
+# Local secrets: never commit real .env files
+**/.env
+**/.env.*
+!**/.env.example
+
+# Private and temporary user-generated uploads
+server/uploads/
+
+# Logs and operating system/editor files
+*.log
+logs/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Potentially sensitive credential files
+*.pem
+*.key
+*.p12
+*.pfx
