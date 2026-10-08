@@ -33,7 +33,6 @@
     "socket.io-client": "^4.8.1",
     "sonner": "^2.0.6",
     "tailwind-merge": "^3.3.1",
-    "tailwindcss-animate": "^1.0.7",
     "zustand": "^5.0.7"
   },
   "devDependencies": {
@@ -48,6 +47,7 @@
     "globals": "^16.3.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
+    "tailwindcss-animate": "^1.0.7",
     "vite": "^7.0.4"
   }
 }
